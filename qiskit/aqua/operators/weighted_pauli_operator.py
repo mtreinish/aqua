@@ -599,7 +599,7 @@ class WeightedPauliOperator(BaseOperator):
     # pylint: disable=arguments-differ
     def construct_evaluation_circuit(self, wave_function, statevector_mode,
                                      qr=None, cr=None, use_simulator_snapshot_mode=False,
-                                     circuit_name_prefix=''):
+                                     circuit_name_prefix='', args=None):
         r"""
         Construct the circuits for evaluation, which calculating the expectation <psi\|H\|psi>.
 
@@ -608,7 +608,8 @@ class WeightedPauliOperator(BaseOperator):
         that we construct an individual circuit <psi\|, and a bundle circuit for H\|psi>
 
         Args:
-            wave_function (QuantumCircuit): the quantum circuit.
+            wave_function (QuantumCircuit or function): the quantum circuit or a function that will
+                generate a quantum circuit
             statevector_mode (bool): indicate which type of simulator are going to use.
             qr (QuantumRegister, optional): the quantum register associated with the input_circuit
             cr (ClassicalRegister, optional): the classical register associated
@@ -628,54 +629,76 @@ class WeightedPauliOperator(BaseOperator):
                        cannot find quantum register with `q` as the name
             AquaError: The provided qr is not in the wave_function
         """
+
         if self.is_empty():
             raise AquaError("Operator is empty, check the operator.")
         # pylint: disable=import-outside-toplevel
         from qiskit.aqua.utils.run_circuits import find_regs_by_name
 
+        if not isinstance(wave_function, QuantumCircuit):
+            from_function = True
+            _wave_function = wave_function(*args)
+        else:
+            from_function = False
+            _wave_function = wave_function
+
         if qr is None:
-            qr = find_regs_by_name(wave_function, 'q')
+            qr = find_regs_by_name(_wave_function, 'q')
             if qr is None:
                 raise AquaError("Either provide the quantum register (qr) explicitly or use"
                                 " `q` as the name of the quantum register in the input circuit.")
         else:
-            if not wave_function.has_register(qr):
+            if not _wave_function.has_register(qr):
                 raise AquaError("The provided QuantumRegister (qr) is not in the circuit.")
 
         n_qubits = self.num_qubits
         instructions = self.evaluation_instruction(statevector_mode, use_simulator_snapshot_mode)
         circuits = []
         if use_simulator_snapshot_mode:
-            circuit = wave_function.copy(name=circuit_name_prefix + 'snapshot_mode')
+            if not from_function:
+                circuit = _wave_function.copy(name=circuit_name_prefix + 'snapshot_mode')
+            else:
+                circuit = _wave_function
+                circuit.name = circuit_name_prefix + 'snapshot_mode'
             # Add expectation value snapshot instruction
             instr = instructions.get('expval_snapshot', None)
             if instr is not None:
                 circuit.append(instr, qr)
             circuits.append(circuit)
         elif statevector_mode:
-            circuits.append(wave_function.copy(name=circuit_name_prefix + 'psi'))
+            if not from_function:
+                circuits.append(_wave_function.copy(name=circuit_name_prefix + 'psi'))
+            else:
+                circuit = _wave_function
+                circuit.name = circuit_name_prefix + 'psi'
             for _, pauli in self._paulis:
                 inst = instructions.get(pauli.to_label(), None)
                 if inst is not None:
-                    circuit = wave_function.copy(name=circuit_name_prefix + pauli.to_label())
+                    if not from_function:
+                        circuit = _wave_function.copy(name=circuit_name_prefix + pauli.to_label())
+                    else:
+                        circuit = wave_function(*args)
+                        circuit.name = circuit_name_prefix + pauli.to_label()
                     circuit.append(inst, qr)
                     circuits.append(circuit)
         else:
-            base_circuit = wave_function.copy()
-            if cr is not None:
-                if not base_circuit.has_register(cr):
-                    base_circuit.add_register(cr)
-            else:
-                cr = find_regs_by_name(base_circuit, 'c', qreg=False)
-                if cr is None:
-                    cr = ClassicalRegister(n_qubits, name='c')
-                    base_circuit.add_register(cr)
-
             for basis, _ in self._basis:
-                circuit = base_circuit.copy(name=circuit_name_prefix + basis.to_label())
+                if not from_function: 
+                    circuit = _wave_function.copy()
+                else:
+                    circuit = wave_function(*args)
+                circuit.name = circuit_name_prefix + basis.to_label()
+                if cr is not None:
+                    if not circuit.has_register(cr):
+                        circuit.add_register(cr)
+                else:
+                    cr = find_regs_by_name(circuit, 'c', qreg=False)
+                    if cr is None:
+                        cr = ClassicalRegister(n_qubits, name='c')
+                        circuit.add_register(cr)
+
                 circuit.append(instructions[basis.to_label()], qargs=qr, cargs=cr)
                 circuits.append(circuit)
-
         return circuits
 
     def evaluation_instruction(self, statevector_mode, use_simulator_snapshot_mode=False):

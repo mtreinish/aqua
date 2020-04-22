@@ -316,11 +316,11 @@ class VQE(VQAlgorithm, MinimumEigensolver):
         if self.operator is None:
             raise AquaError("Operator was never provided")
 
-        wave_function = self._var_form.construct_circuit(parameter)
+#        wave_function = self._var_form.construct_circuit(parameter)
         circuits = self._operator.construct_evaluation_circuit(
-            wave_function, statevector_mode,
+            self._var_form.construct_circuit, statevector_mode,
             use_simulator_snapshot_mode=use_simulator_snapshot_mode,
-            circuit_name_prefix=circuit_name_prefix)
+            circuit_name_prefix=circuit_name_prefix, args=[parameter])
         return circuits
 
     def _eval_aux_ops(self, threshold=1e-12, params=None):
